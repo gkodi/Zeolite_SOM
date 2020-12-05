@@ -1,0 +1,196 @@
+---
+title: "Self-Organizing Maps for identification of zeolitic diagenesis patterns in closed hydrologic systems."
+author: "Gayantha R. L. Kodikara"
+date: "6/20/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First thing first, clean your work space ;-).
+```{r}
+rm(list = ls())
+```
+
+Here we add libraries which we be using for this study.
+```{r}
+library(magrittr)
+library(tidyverse)
+library(kohonen)
+library(RColorBrewer)
+library(rpart.plot)
+```
+
+Let's add our dataset. The ZeoliteDB.csv file contains the mineralogical abundance from samples collected from 13 paleolake basins from USA, Mexico, Greece and Tanzania. Data were compiled from the published research articles. More information can be find in README file.
+```{r}
+Zeo <- read.csv("ZeoliteDB.csv", header = TRUE)
+```
+
+Assign data set and define other parameters.
+```{r}
+data <- Zeo[,4:17]
+map_dimension <- 10
+n_iterations <- 2000
+recalculate_som <- T
+```
+
+Here we convert our database (vector classes) into a class matrix. We use "tanimato" distance for distance calculation.
+```{r}
+numerics <- summarise_all(data, is.numeric) %>% as.logical()
+factors <- names(data) %>% .[!numerics]
+mineral_list <- list()
+distances <- vector()
+
+for (fac in factors) {
+  mineral_list[[fac]] <- kohonen::classvec2classmat(data[[fac]])
+  distances <- c(distances, 'tanimoto')
+}
+```
+
+Mineral names in the dataset.
+```{r}
+names(mineral_list)
+```
+In the following steps, we will create a som grid and save it as som_zeolite.Rdata.
+```{r}
+som_grid <- kohonen::somgrid(xdim = map_dimension, ydim = map_dimension, topo = "hexagonal")
+
+if(recalculate_som == F & file.exists('som_zeolite.Rdata') == T){ 
+load('som_zeolite.Rdata')
+} else{
+m <- kohonen::supersom(mineral_list, grid = som_grid, rlen = n_iterations, alpha = 0.05, whatmap = c(factors, 'numerics'),
+                       dist.fcts = distances)
+save(m, file = 'som_zeolite.Rdata')
+}
+Changes <- as.data.frame(m$changes)
+Changes$Iteration <- seq(1,n_iterations)
+```
+
+Here we plot the training progress of the SOM.
+```{r}
+png("Fig1.png", width=4000, height=4000, res=500)
+par(mfrow = c(2,1))
+par(mar = c(4.0, 4.0, 0.5, 0.2), xpd=NA, mgp = c(3,0.7,0), las = 1)
+plot(Changes$Glass ~ Changes$Iteration, type = "l", col = "red", xlab = "Iteration", ylab = "Relative distance to the closest unit", ylim = c(0,0.009))
+lines(Changes$Clay10A ~ Changes$Iteration, type = "l", col = "black")
+lines(Changes$Clay14A ~ Changes$Iteration, type = "l", col = "blue")
+lines(Changes$Analcime ~ Changes$Iteration, type = "l", col = "green")
+lines(Changes$Chabazite ~ Changes$Iteration, type = "l", col = "orange")
+lines(Changes$Clinoptilolite ~ Changes$Iteration, type = "l", col = "cyan")
+lines(Changes$Erionite ~ Changes$Iteration, type = "l", col = "gray")
+legend("bottomleft",inset = c(0,0.01), c("Glass","Clay10A", "Clay14A", "Analcime", "Chabazite", "Clinoptilolite","Erionite"), col = c("red","black","blue","green","orange","cyan","gray"), lty = 1,bty = "n", cex = 0.8)
+plot(Changes$Mordenite ~ Changes$Iteration, type = "l", col = "red", xlab = "Iteration", ylab = "Relative distance to the closest unit", ylim = c(0,0.009))
+lines(Changes$Phillipsite ~ Changes$Iteration, type = "l", col = "black")
+lines(Changes$K_feldspar ~ Changes$Iteration, type = "l", col = "blue")
+lines(Changes$Calcite ~ Changes$Iteration, type = "l", col = "green")
+lines(Changes$Quartz ~ Changes$Iteration, type = "l", col = "orange")
+lines(Changes$Opal ~ Changes$Iteration, type = "l", col = "cyan")
+lines(Changes$Plagioclase ~ Changes$Iteration, type = "l", col = "gray")
+legend("bottomleft",inset = c(0,0.01), c("Mordenite", "Phillipsite","K feldspar", "Calcite","Quartz","Opal","Plagioclase"), col = c("red","black","blue","green","orange","cyan","gray"), lty = 1,bty = "n", cex = 0.8)
+```
+
+All codes we can map using "codes" option. 
+```{r}
+png("Fig2.png", width=4000, height=14000, res=500)
+par(mfrow = c(7,2))
+par(mar = c(0.5, 0.5, 0.5, 0.2), xpd=NA, mgp = c(2.0,0.7,0), las = 1)
+plot(m, type = "codes", main=colnames(getCodes(m)))
+```
+
+Here we add all informative figures together
+```{r}
+png("Fig3.png", width=4000, height=3200, res=500)
+par(mfrow = c(2,2))
+par(mar = c(0.2, 0.2, 0.2, 0.2), xpd=NA, mgp = c(0,0,0), las = 1)
+plot(m, type = "counts")
+plot(m, type = "dist.neighbours")
+plot(m, type = "mapping")
+plot(m, type = "quality")
+```
+
+Here we implement the connectivity constrains by factoring the distance of each cluster to another cluster on the SOM. 
+```{r}
+codes = tibble(layers = names(m$codes), codes = m$codes) %>%
+  mutate(codes = purrr::map(codes, as_tibble)) %>%
+  spread(key = layers, value = codes) %>%
+  apply(1, bind_cols) %>%
+  .[[1]] %>% as_tibble()
+```
+
+Here we generate the distance matrix for codes and then generate the distance matrix for map location. Finally we factor the euclidean distance by distance on the map.
+```{r}
+dist_m = dist(codes) %>% as.matrix()
+dist_on_map = kohonen::unit.distances(som_grid)
+dist_adj = dist_m ^ dist_on_map
+```
+
+We tried three well famous methods to determining the optimal number of clusters. 
+1. Ellow method
+```{r}
+factoextra::fviz_nbclust(dist_adj, factoextra::hcut, method = "wss", hc_method = 'ward.D2', k.max = 15)
+```
+
+2. Silhouette method
+```{r}
+factoextra::fviz_nbclust(dist_adj, factoextra::hcut, method = "silhouette", hc_method = "ward.D2", k.max = 15)
+```
+
+3. Gap statistic
+```{r}
+set.seed(123)
+gap_stat = cluster::clusGap(dist_adj, FUN = factoextra::hcut, K.max = 15, B = 50, hc_method = "ward.D2")
+factoextra::fviz_gap_stat(gap_stat)
+```
+
+Here we perform the Hierarchical Clustering methods and plot them on SOM.
+```{r}
+png("Fig4.png", width=4000, height=14000, res=500)
+par(mfrow = c(7,2))
+par(mar = c(0.5, 0.5, 0.5, 0.2), xpd=NA, mgp = c(2.0,0.7,0), las = 1)
+n <- 60
+col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector <- unlist(mapply(brewer.pal,col_pals$maxcolors, rownames(col_pals)))
+clust_adj = hclust(as.dist(dist_adj), 'ward.D2')
+som_cluster_adj = cutree(clust_adj, 12)
+plot(m, type="codes", main=colnames(getCodes(m)), bgcol = col_vector[som_cluster_adj], pchs = NA)
+```
+
+
+Plot the cluster summary.
+```{r}
+link = tibble( map_loc = names(som_cluster_adj) %>% as.integer()
+               ,cluster = som_cluster_adj)
+
+pred = tibble( map_loc = m$unit.classif) %>%
+  left_join(link)
+pred_data = data %>% bind_cols(pred)
+ggplot(pred_data, aes(x = as.factor(cluster)
+                      , fill = as.factor(cluster))
+       ) +
+  geom_bar(show.legend = F)
+```
+
+Finally, we will create a DT plot.
+```{r}
+png("Fig5.png", width=13500, height=5000, res=500)
+pred_dt = pred_data
+
+pred_dt$cluster = as.factor(pred_dt$cluster)
+
+m_tree = rpart::rpart(cluster~.-map_loc
+                      , pred_dt
+                      , maxdepth = 30)
+
+rpart.plot::prp(m_tree
+                  , branch.type   = 5
+                  , box.palette   ="RdYlGn"
+                  , faclen        = 0
+                  , extra         = 6
+                  , fallen.leaves = T
+                  , tweak         = 2
+                  )
+```

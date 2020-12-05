@@ -1,0 +1,101 @@
+---
+title: "Radial plot for Mineral abundance"
+author: "Gayantha R. L. Kodikara"
+date: "6/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+I like to clean my workplace after each project ;-)
+```{r}
+rm(list = ls())
+```
+
+add data 
+```{r}
+data <- read.csv("Zeolite_Chart.csv", header = TRUE)
+```
+
+Here we add libraries which we be using for this study.
+```{r}
+library(magrittr)
+library(tidyverse)
+library(viridis)
+library(viridisLite)
+```
+
+
+Get the mineral name and the y position of each label
+```{r}
+label_data <- data %>% group_by(Id, Mineral) %>% summarize(tot=sum(Final))
+number_of_bar <- nrow(label_data)
+angle <- 90 - 360 * (label_data$Id-0.5) /number_of_bar 
+label_data$hjust <- ifelse( angle < -90, 1, 0)
+label_data$angle <- ifelse(angle < -90, angle+180, angle)
+```
+
+Here we prepare a data frame for base lines
+```{r}
+empty_bar <- 2
+base_data <- data %>% 
+  group_by(Lithology) %>% 
+  summarize(start=min(Id), end=max(Id) - empty_bar) %>% 
+  rowwise() %>% 
+  mutate(title=mean(c(start, end)))
+```
+
+Prepare a data frame for grid
+```{r}
+grid_data <- base_data
+grid_data$end <- grid_data$end[ c( nrow(grid_data), 1:nrow(grid_data)-1)] + 1
+grid_data$start <- grid_data$start - 1
+```
+
+Here we will create our radial plot.
+```{r}
+png("Fig_6.png", width=3000, height=3000, res=500)
+p <- ggplot(data) +      
+  
+  # Add the stacked bar
+  geom_bar(aes(x=as.factor(Id), y=Final, fill=Abundance), stat="identity", alpha=0.9) +
+  scale_fill_manual(values = c("red", "green", "blue")) +
+  
+  # Add lines for value range 0,25,50,75,and 100.
+  geom_segment(data=grid_data, aes(x = end, y = 0, xend = start, yend = 0), colour = "grey", alpha=1, size=0.3 , inherit.aes = FALSE ) +
+  geom_segment(data=grid_data, aes(x = end, y = 25, xend = start, yend = 25), colour = "grey", alpha=1, size=0.3 , inherit.aes = FALSE ) +
+  geom_segment(data=grid_data, aes(x = end, y = 50, xend = start, yend = 50), colour = "grey", alpha=1, size=0.3 , inherit.aes = FALSE ) +
+  geom_segment(data=grid_data, aes(x = end, y = 75, xend = start, yend = 75), colour = "grey", alpha=1, size=0.3 , inherit.aes = FALSE ) +
+    geom_segment(data=grid_data, aes(x = end, y = 100, xend = start, yend = 100), colour = "grey", alpha=1, size=0.3 , inherit.aes = FALSE ) +
+  
+  # Here we add text to each line draw in previous step
+  ggplot2::annotate("text", x = rep(max(data$Id),5), y = c(0, 25, 50, 75,100), label = c("0", "25", "50", "75","100") , color="grey", size=2 , angle=0, fontface="bold", hjust=1) +
+  
+  ylim(-120,max(label_data$tot, na.rm=T)) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.box.margin = margin(0,0,0,0, "pt"),
+    legend.key.size = unit(0.4, "lines"),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(0,4), "pt") 
+  ) +
+  coord_polar(clip = "off") +
+  
+  # Add mineral name on end of each bar
+  geom_text(data=label_data, aes(x=Id, y=tot+10, label=Mineral, hjust=hjust), color="black", fontface="bold",alpha=0.6, size=2, angle= label_data$angle, inherit.aes = FALSE) +
+  
+  # Add base line information. Bed type in our case.
+  geom_segment(data=base_data, aes(x = start, y = -5, xend = end, yend = -5), colour = "black", alpha=0.8, size=0.6 , inherit.aes = FALSE )  +
+  geom_text(data=base_data, aes(x = title, y = -25, label=Lithology), hjust=c(1,1,0,0,1), colour = "black", alpha=0.8, size=2, fontface="bold", inherit.aes = FALSE)
+
+p
+dev.off()
+```
+
+
+
